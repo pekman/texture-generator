@@ -1,6 +1,6 @@
 #include <string>
 #include <iostream>
-// #include <fstream>
+#include <fstream>
 #include <cstdio>
 #include <cmath>
 #include <pcl/io/auto_io.h>
@@ -13,7 +13,7 @@
 #include <png.h>
 
 
-const int TEXTURE_SIZE = 1024;
+const int TEXTURE_SIZE = 128;
 
 
 png_structp png_ptr;
@@ -21,10 +21,11 @@ png_infop info_ptr;
 png_byte png_row[TEXTURE_SIZE * 3];
 
 
-class Vector : public Eigen::Vector3f {
+// vector class with type conversions from and to PCL point types
+class Vector : public Eigen::Vector3d {
 public:
     Vector(const pcl::PointXYZ &p) : Vector(p.x, p.y, p.z) {}
-    using Eigen::Vector3f::Vector3f;
+    using Eigen::Vector3d::Vector3d;
 
     operator pcl::PointXYZ() const {
         return pcl::PointXYZ(x(), y(), z());
@@ -37,6 +38,17 @@ public:
         return val;
     }
 };
+
+
+// clamp texture coordinate between 0.0 and 1.0, because values
+// outside that are rounding errors
+static inline double clamp01(double val) {
+    if (val <= 0.0)  // eliminates -0.0 too
+        return 0.0;
+    if (val >= 1.0)
+        return 1.0;
+    return val;
+}
 
 
 int main(int argc, char *argv[])
@@ -60,10 +72,17 @@ int main(int argc, char *argv[])
     std::cout << mesh->polygons.size() << std::endl;
 
 
-    // std::ofstream objfile(argv[3], std::ios::binary);
+    std::string filename_base(argv[3]);
+    std::ofstream objfile(filename_base + ".obj", std::ios::binary);
+    std::ofstream mtlfile(filename_base + ".mtl", std::ios::binary);
+    objfile << std::fixed;  // don't use scientific format for floats
+    objfile << "mtllib " << filename_base << ".mtl\n";
+    for (const pcl::PointXYZ &p : *mesh_points)
+        objfile << "v " << p.x << ' ' << p.y << ' ' << p.z << '\n';
 
 
     unsigned polygon_id = 1;
+    unsigned vertex_id = 1;
 
     size_t num_polygons = mesh->polygons.size();
     for (const pcl::Vertices &polygon : mesh->polygons) {
@@ -71,6 +90,7 @@ int main(int argc, char *argv[])
                   << "/" << num_polygons
                   << " (" << (100.0 * (polygon_id - 1) / num_polygons)
                   << "%)" << std::endl;
+
 
         Vector vertex1 = (*mesh_points)[polygon.vertices[0]];
         Vector vertex2 = (*mesh_points)[polygon.vertices[1]];
@@ -83,18 +103,18 @@ int main(int argc, char *argv[])
         Vector v_unit = v_side.normalized();
 
         // If there are more than 3 vertices, check if any of them are
-        // outside the parallelogram defined by the 3 first vertices,
+        // outside the parallelogram defined by the first 3 vertices,
         // and expand area as needed.
-        float u_min = 0;
-        float v_min = 0;
-        float u_max = u_side.norm();
-        float v_max = v_side.norm();
+        double u_min = 0;
+        double v_min = 0;
+        double u_max = u_side.norm();
+        double v_max = v_side.norm();
         for (auto it = polygon.vertices.cbegin() + 3;
              it != polygon.vertices.cend();  ++it)
         {
             Vector vertex = Vector((*mesh_points)[*it]) - vertex1;
-            float scalarproj_u = u_unit.dot(vertex);
-            float scalarproj_v = v_unit.dot(vertex);
+            double scalarproj_u = u_unit.dot(vertex);
+            double scalarproj_v = v_unit.dot(vertex);
             if (scalarproj_u > u_max) u_max = scalarproj_u;
             if (scalarproj_v > v_max) v_max = scalarproj_v;
             if (scalarproj_u < u_min) u_min = scalarproj_u;
@@ -104,6 +124,33 @@ int main(int argc, char *argv[])
         Vector origin = vertex1 + u_unit*u_min + v_unit*v_min;
         Vector u_pixelstep = (u_unit*(u_max - u_min)) / TEXTURE_SIZE;
         Vector v_pixelstep = (v_unit*(v_max - v_min)) / TEXTURE_SIZE;
+
+
+        // store vertices, texture coordinates, and face
+        std::ostringstream face_str;
+        face_str << 'f';
+        for (auto vertex_index : polygon.vertices) {
+            Vector p((*mesh_points)[vertex_index]);
+
+            Vector relative_pos = p - origin;
+            double u = u_unit.dot(relative_pos) / (u_max - u_min);
+            double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
+            objfile << "vt " << clamp01(u) << ' ' << clamp01(v) << '\n';
+
+            face_str << ' ' << (vertex_index + 1) << '/' << vertex_id;
+            ++vertex_id;
+        }
+        objfile << "usemtl mtl" << polygon_id << '\n';
+        objfile << "s " << polygon_id << '\n';
+        objfile << face_str.str() << '\n';
+
+        // store material information
+        mtlfile << "newmtl mtl" << polygon_id << '\n'
+                << "\tKa 1.0 1.0 1.0\n"
+                << "\tKd 1.0 1.0 1.0\n"
+                << "\tillum 1\n"
+                << "\tmap_Ka texture" << polygon_id << ".png\n"
+                << "\tmap_Kd texture" << polygon_id << ".png\n\n";
 
 
         // build texture using nearest-neighbor search
