@@ -20,6 +20,7 @@
 // vector class with type conversions from and to PCL point types
 class Vector : public Eigen::Vector3d {
 public:
+    Vector() {}
     Vector(const pcl::PointXYZ &p) : Vector(p.x, p.y, p.z) {}
     using Eigen::Vector3d::Vector3d;
 
@@ -35,11 +36,16 @@ public:
     }
 };
 
+static inline std::ostream &operator<<(std::ostream &os, const Vector &v) {
+    os << v.x() << ' ' << v.y() << ' ' << v.z();
+    return os;
+}
+
 
 // clamp texture coordinate between 0.0 and 1.0, because values
 // outside that are rounding errors
 static inline double clamp01(double val) {
-    if (val <= 0.0)  // eliminates -0.0 too
+    if (! (val > 0.0))  // eliminates <0, -0.0, and NaN
         return 0.0;
     if (val >= 1.0)
         return 1.0;
@@ -75,13 +81,17 @@ void generate(
         throw std::runtime_error(std::string("Error opening ") + polygonfile);
     pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
-    // open output files
-    std::ofstream objfile(outfile_base + ".obj", std::ios::binary);
-    std::ofstream mtlfile(outfile_base + ".mtl", std::ios::binary);
-    objfile << std::fixed;  // don't use scientific format for floats
-    objfile << "mtllib " << outfile_base << ".mtl\n";
-    for (const pcl::PointXYZ &p : *mesh_points)
-        objfile << "v " << p.x << ' ' << p.y << ' ' << p.z << '\n';
+    // open output file
+    std::ofstream x3dfile(outfile_base + ".x3d", std::ios::binary);
+    x3dfile << std::fixed;  // don't use scientific format for floats
+    x3dfile <<
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!DOCTYPE X3D PUBLIC \"ISO//Web3D//DTD X3D 3.3//EN\""
+        " \"http://www.web3d.org/specifications/x3d-3.3.dtd\">\n"
+        "<X3D profile=\"Interchange\" version=\"3.3\""
+        " xmlns:xsd=\"http://www.w3.org/2001/XMLSchema-instance\""
+        " xsd:noNamespaceSchemaLocation=\"http://www.web3d.org/specifications/x3d-3.2.xsd\">\n"
+        "<Scene>";
 
 
     std::vector<int> point_indices(points_per_texel);
@@ -89,7 +99,6 @@ void generate(
     png_byte png_row[texture_size * 3];
 
     unsigned polygon_id = 1;
-    unsigned vertex_id = 1;
 
     size_t num_polygons = mesh->polygons.size();
     for (const pcl::Vertices &polygon : mesh->polygons) {
@@ -136,38 +145,51 @@ void generate(
         Vector v_texelstep = (v_unit*(v_max - v_min)) / texture_size;
 
 
-        // store vertices, texture coordinates, and face
-        std::ostringstream face_str;
-        face_str << 'f';
-        for (auto vertex_index : polygon.vertices) {
-            Vector p((*mesh_points)[vertex_index]);
+        // store polygon and its vertex and texture coordinates to X3D file
 
-            Vector relative_pos = p - origin;
+        Vector vertices[polygon.vertices.size()];
+        for (size_t i=0; i < polygon.vertices.size(); ++i)
+            vertices[i] = (*mesh_points)[polygon.vertices[i]];
+
+        x3dfile <<
+            "<Shape>"
+            "<IndexedFaceSet coordIndex=\"0";
+        for (size_t i=1; i < polygon.vertices.size(); ++i)
+            x3dfile << ' ' << i;
+        x3dfile << "\" texCoordIndex=\"0";
+        for (size_t i=1; i < polygon.vertices.size(); ++i)
+            x3dfile << ' ' << i;
+
+        x3dfile << "\"><Coordinate point=\"" << vertices[0];
+        for (size_t i=1; i < polygon.vertices.size(); ++i)
+            x3dfile << ' ' << vertices[i];
+
+        x3dfile << "\"/><TextureCoordinate point=\"";
+        bool first = true;
+        for (const Vector &vertex : vertices) {
+            Vector relative_pos = vertex - origin;
             double u = u_unit.dot(relative_pos) / (u_max - u_min);
             double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
-            objfile << "vt " << clamp01(u) << ' ' << clamp01(v) << '\n';
 
-            face_str << ' ' << (vertex_index + 1) << '/' << vertex_id;
-            ++vertex_id;
+            if (! first)
+                x3dfile << ' ';
+            x3dfile << clamp01(u) << ' ' << clamp01(v);
+            first = false;
         }
-        objfile << "usemtl mtl" << polygon_id << '\n';
-        objfile << "s " << polygon_id << '\n';
-        objfile << face_str.str() << '\n';
 
-        // store material information
-        mtlfile << "newmtl mtl" << polygon_id << '\n'
-                << "\tKa 1.0 1.0 1.0\n"
-                << "\tKd 1.0 1.0 1.0\n"
-                << "\tillum 1\n"
-                << "\tmap_Ka texture" << polygon_id << ".png\n"
-                << "\tmap_Kd texture" << polygon_id << ".png\n\n";
+        x3dfile <<
+            "\"/></IndexedFaceSet>"
+            "<Appearance>"
+            "<ImageTexture url=\"texture" << polygon_id << ".png\"/>"
+            "</Appearance>"
+            "</Shape>\n";
 
 
         // build texture using nearest-neighbor search
 
         // init png writing and write header
         std::ostringstream filename;
-        filename << "texture" << polygon_id++ << ".png";
+        filename << "texture" << polygon_id << ".png";
         std::FILE *fp = std::fopen(filename.str().c_str(), "wb");
         if (! fp)
             throw std::system_error(errno, std::system_category(),
@@ -255,5 +277,9 @@ void generate(
         if (std::fclose(fp) == EOF)
             throw std::system_error(errno, std::system_category(),
                                     std::string("Error closing ") + filename.str());
+
+        polygon_id++;
     }
+
+    x3dfile << "</Scene>\n</X3D>\n";
 }
