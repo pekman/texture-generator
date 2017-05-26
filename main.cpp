@@ -1,5 +1,6 @@
 #include <iostream>
 #include <boost/program_options.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include <cmath>
 #include "generate.hpp"
 
@@ -12,7 +13,7 @@ int main(int argc, char *argv[])
 
     string cloudfile;
     string polygonfile;
-    string outfile_base;
+    string outfile;
     unsigned texture_size;
     unsigned points_per_texel;
     float max_distance;
@@ -21,12 +22,12 @@ int main(int argc, char *argv[])
     pos.add_options()
         ("cloudfile", po::value<string>(&cloudfile)->required())
         ("polygonfile", po::value<string>(&polygonfile)->required())
-        ("outfile-base", po::value<string>(&outfile_base)->required())
+        ("outfile", po::value<string>(&outfile)->required())
         ;
     po::positional_options_description p;
     p.add("cloudfile", 1);
     p.add("polygonfile", 1);
-    p.add("outfile-base", 1);
+    p.add("outfile", 1);
 
     po::options_description opts("Options");
     opts.add_options()
@@ -52,11 +53,11 @@ int main(int argc, char *argv[])
 
         if (argc == 1 || vm.count("help")) {
             cout << "Usage:  " << argv[0]
-                 << " [options] cloudfile polygonfile outfile-base" << endl;
+                 << " [options] cloudfile polygonfile outfile" << endl;
             cout << endl;
-            cout << "  cloudfile       input point cloud file" << endl;
-            cout << "  polygonfile     input polygon file" << endl;
-            cout << "  outfile-base    base name (without extension) for output files" << endl;
+            cout << "  cloudfile      input point cloud file" << endl;
+            cout << "  polygonfile    input polygon file" << endl;
+            cout << "  outfile        output file name with or without extension" << endl;
             cout << endl;
             cout << opts << endl;
             return vm.count("help") ? 0 : 2;
@@ -69,11 +70,14 @@ int main(int argc, char *argv[])
         return 2;
     }
 
+    if (! boost::algorithm::ends_with(outfile, ".x3d"))
+        outfile += ".x3d";
+
     try {
         generate(
             cloudfile,
             polygonfile,
-            outfile_base,
+            outfile,
             texture_size,
             points_per_texel,
             max_distance * max_distance);

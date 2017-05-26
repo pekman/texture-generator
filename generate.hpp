@@ -5,7 +5,7 @@
 void generate(
     const std::string &cloudfile,
     const std::string &polygonfile,
-    const std::string &outfile_base,
+    const std::string &outfile,
     unsigned texture_size,
     unsigned points_per_texel,
     float max_sqr_dist);

@@ -56,7 +56,7 @@ static inline double clamp01(double val) {
 void generate(
     const std::string &cloudfile,
     const std::string &polygonfile,
-    const std::string &outfile_base,
+    const std::string &outfile,
     unsigned texture_size,
     unsigned points_per_texel,
     float max_sqr_dist)
@@ -82,7 +82,7 @@ void generate(
     pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
     // open output file
-    std::ofstream x3dfile(outfile_base + ".x3d", std::ios::binary);
+    std::ofstream x3dfile(outfile, std::ios::binary);
     x3dfile << std::fixed;  // don't use scientific format for floats
     x3dfile <<
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
