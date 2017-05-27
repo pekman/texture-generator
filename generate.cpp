@@ -16,6 +16,13 @@
 #include <png.h>
 #include "generate.hpp"
 
+using std::size_t;
+using std::string;
+using std::cout;
+using std::cerr;
+using std::endl;
+using std::isfinite;
+
 
 // vector class with type conversions from and to PCL point types
 class Vector : public Eigen::Vector3d {
@@ -63,9 +70,9 @@ static inline bool any_two_equal(const Vector *vertices, size_t len) {
 
 
 void generate(
-    const std::string &cloudfile,
-    const std::string &polygonfile,
-    const std::string &outfile,
+    const string &cloudfile,
+    const string &polygonfile,
+    const string &outfile,
     unsigned texture_size,
     unsigned points_per_texel,
     float max_sqr_dist)
@@ -78,7 +85,7 @@ void generate(
     // load input point cloud
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
     if (pcl::io::load(cloudfile, *cloud) == -1)
-        throw std::runtime_error(std::string("Error opening ") + cloudfile);
+        throw std::runtime_error(string("Error opening ") + cloudfile);
     pcl::KdTreeFLANN<pcl::PointXYZRGB> kdtree;
     kdtree.setInputCloud(cloud);
 
@@ -87,7 +94,7 @@ void generate(
     pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
     // if (pcl::io::load(polygonfile, *mesh) == -1) {
     if (pcl::io::loadPLYFile(polygonfile, *mesh) == -1)
-        throw std::runtime_error(std::string("Error opening ") + polygonfile);
+        throw std::runtime_error(string("Error opening ") + polygonfile);
     pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
     // open output file
@@ -112,10 +119,8 @@ void generate(
 
     size_t num_polygons = mesh->polygons.size();
     for (const pcl::Vertices &polygon : mesh->polygons) {
-        std::cout << "processing polygon " << polygon_id
-                  << "/" << num_polygons
-                  << " (" << (100.0 * (polygon_id - 1) / num_polygons)
-                  << "%)" << std::endl;
+        cout << "processing polygon " << polygon_id << "/" << num_polygons
+             << " (" << (100.0 * (polygon_id-1) / num_polygons) << "%)" << endl;
 
 
         // Calculate vectors for determining 3D location of each texel.
@@ -171,13 +176,12 @@ void generate(
             double u = u_unit.dot(relative_pos) / (u_max - u_min);
             double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
 
-            if (! std::isfinite(u) || ! std::isfinite(v)) {
-                std::cerr <<
+            if (! isfinite(u) || ! isfinite(v)) {
+                cerr <<
                     "warning: error generating texture coordinates,"
-                    " skipping polygon" << std::endl;
+                    " skipping polygon" << endl;
                 if (any_two_equal(vertices, num_vertices))
-                    std::cerr << "         (probable cause: identical vertices)"
-                              << std::endl;
+                    cerr << "         (probable cause: identical vertices)" << endl;
 
                 shape_valid = false;
                 break;
@@ -222,7 +226,7 @@ void generate(
         std::FILE *fp = std::fopen(filename.str().c_str(), "wb");
         if (! fp)
             throw std::system_error(errno, std::system_category(),
-                                    std::string("Error opening ") + filename.str());
+                                    string("Error opening ") + filename.str());
         png_structp png_ptr = png_create_write_struct(
             PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
         if (! png_ptr)
@@ -254,7 +258,7 @@ void generate(
                     pos, points_per_texel, point_indices, point_sqr_distances);
 
                 if (num_found <= 0) {
-                    std::cerr << "warning: no points found near " << pos << std::endl;
+                    cerr << "warning: no points found near " << pos << endl;
                     png_pixel[0] = 0;
                     png_pixel[1] = 0;
                     png_pixel[2] = 0;
@@ -285,13 +289,13 @@ void generate(
                     double r = r_sum / weight_sum;
                     double g = g_sum / weight_sum;
                     double b = b_sum / weight_sum;
-                    if (std::isfinite(r) && std::isfinite(g) && std::isfinite(b)) {
+                    if (isfinite(r) && isfinite(g) && isfinite(b)) {
                         png_pixel[0] = std::lround(r);
                         png_pixel[1] = std::lround(g);
                         png_pixel[2] = std::lround(b);
                     }
                     else {
-                        std::cerr << "warning: error in color calculation" << std::endl;
+                        cerr << "warning: error in color calculation" << endl;
                         png_pixel[0] = 0;
                         png_pixel[1] = 0;
                         png_pixel[2] = 0;
@@ -305,7 +309,7 @@ void generate(
         png_destroy_write_struct(&png_ptr, &info_ptr);
         if (std::fclose(fp) == EOF)
             throw std::system_error(errno, std::system_category(),
-                                    std::string("Error closing ") + filename.str());
+                                    string("Error closing ") + filename.str());
 
         polygon_id++;
     }
