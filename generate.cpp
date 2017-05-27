@@ -166,7 +166,7 @@ void generate(
         Vector v_texelstep = (v_unit*(v_max - v_min)) / texture_size;
 
 
-        // store polygon and its vertex and texture coordinates to X3D file
+        // calculate texture coordinates
 
         bool shape_valid = true;
         boost::container::small_vector<float, 4*2> texturecoords;
@@ -193,6 +193,8 @@ void generate(
         }
 
         if (shape_valid) {
+            // store polygon and its vertex and texture coordinates to X3D file
+
             x3dfile <<
                 "<Shape>"
                 "<IndexedFaceSet coordIndex=\"0";
@@ -216,101 +218,102 @@ void generate(
                 "<ImageTexture url=\"texture" << polygon_id << ".png\"/>"
                 "</Appearance>"
                 "</Shape>\n";
-        }
 
 
-        // build texture using nearest-neighbor search
+            // build texture using nearest-neighbor search
 
-        // init png writing and write header
-        std::ostringstream filename;
-        filename << "texture" << polygon_id << ".png";
-        std::FILE *fp = std::fopen(filename.str().c_str(), "wb");
-        if (! fp)
-            throw std::system_error(errno, std::system_category(),
-                                    string("Error opening ") + filename.str());
-        png_structp png_ptr = png_create_write_struct(
-            PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-        if (! png_ptr)
-            throw std::runtime_error("Error: png_create_write_struct failed");
-        png_infop info_ptr = png_create_info_struct(png_ptr);
-        if (! info_ptr)
-            throw std::runtime_error("Error: png_create_info_struct failed");
-        if (setjmp(png_jmpbuf(png_ptr)))
-            throw std::runtime_error("Error: unknown png writing error");
-        png_init_io(png_ptr, fp);
-        png_set_IHDR(
-            png_ptr, info_ptr,
-            texture_size, texture_size,  // width, height
-            8, PNG_COLOR_TYPE_RGB,  // 8-bit RGB
-            PNG_INTERLACE_NONE,
-            PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
-        png_write_info(png_ptr, info_ptr);
+            // init png writing and write header
+            std::ostringstream filename;
+            filename << "texture" << polygon_id << ".png";
+            std::FILE *fp = std::fopen(filename.str().c_str(), "wb");
+            if (! fp)
+                throw std::system_error(errno, std::system_category(),
+                                        string("Error opening ") + filename.str());
+            png_structp png_ptr = png_create_write_struct(
+                PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+            if (! png_ptr)
+                throw std::runtime_error("Error: png_create_write_struct failed");
+            png_infop info_ptr = png_create_info_struct(png_ptr);
+            if (! info_ptr)
+                throw std::runtime_error("Error: png_create_info_struct failed");
+            if (setjmp(png_jmpbuf(png_ptr)))
+                throw std::runtime_error("Error: unknown png writing error");
+            png_init_io(png_ptr, fp);
+            png_set_IHDR(
+                png_ptr, info_ptr,
+                texture_size, texture_size,  // width, height
+                8, PNG_COLOR_TYPE_RGB,  // 8-bit RGB
+                PNG_INTERLACE_NONE,
+                PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+            png_write_info(png_ptr, info_ptr);
 
-        // generate texture
-        for (unsigned y=0; y<texture_size; ++y) {
-            Vector row_origin = origin + v_texelstep*y;
+            // generate texture
+            for (unsigned y=0; y<texture_size; ++y) {
+                Vector row_origin = origin + v_texelstep*y;
 
-            #pragma omp parallel for firstprivate(point_indices, point_sqr_distances)
-            for (unsigned x=0; x<texture_size; ++x) {
-                png_byte *png_pixel = &png_row[x*3];
-                pcl::PointXYZRGB pos = Vector(row_origin + u_texelstep*x);
+                #pragma omp parallel for firstprivate(point_indices, point_sqr_distances)
+                for (unsigned x=0; x<texture_size; ++x) {
+                    png_byte *png_pixel = &png_row[x*3];
+                    pcl::PointXYZRGB pos = Vector(row_origin + u_texelstep*x);
 
-                int num_found = kdtree.nearestKSearch(
-                    pos, points_per_texel, point_indices, point_sqr_distances);
+                    int num_found = kdtree.nearestKSearch(
+                        pos, points_per_texel, point_indices, point_sqr_distances);
 
-                if (num_found <= 0) {
-                    cerr << "warning: no points found near " << pos << endl;
-                    png_pixel[0] = 0;
-                    png_pixel[1] = 0;
-                    png_pixel[2] = 0;
-                }
-                else {
-                    // calculate weighted average of point colors
-                    double r_sum = 0.0;
-                    double g_sum = 0.0;
-                    double b_sum = 0.0;
-                    double weight_sum = 0.0;
-                    for (int i=0; i<num_found; ++i) {
-                        float sqr_dist = point_sqr_distances[i];
-                        if (sqr_dist <= max_sqr_dist) {
-                            const pcl::PointXYZRGB &point = (*cloud)[point_indices[i]];
-
-                            // dist = distance^4
-                            double dist = (double)sqr_dist * (double)sqr_dist;
-                            if (dist < min_safe_dist)
-                                dist = min_safe_dist;
-
-                            r_sum += point.r / dist;
-                            g_sum += point.g / dist;
-                            b_sum += point.b / dist;
-                            weight_sum += 1.0/dist;
-                        }
-                    }
-
-                    double r = r_sum / weight_sum;
-                    double g = g_sum / weight_sum;
-                    double b = b_sum / weight_sum;
-                    if (isfinite(r) && isfinite(g) && isfinite(b)) {
-                        png_pixel[0] = std::lround(r);
-                        png_pixel[1] = std::lround(g);
-                        png_pixel[2] = std::lround(b);
-                    }
-                    else {
-                        cerr << "warning: error in color calculation" << endl;
+                    if (num_found <= 0) {
+                        cerr << "warning: no points found near " << pos << endl;
                         png_pixel[0] = 0;
                         png_pixel[1] = 0;
                         png_pixel[2] = 0;
                     }
-                }
-            }
-            png_write_row(png_ptr, png_row.data());
-        }
+                    else {
+                        // calculate weighted average of point colors
+                        double r_sum = 0.0;
+                        double g_sum = 0.0;
+                        double b_sum = 0.0;
+                        double weight_sum = 0.0;
+                        for (int i=0; i<num_found; ++i) {
+                            float sqr_dist = point_sqr_distances[i];
+                            if (sqr_dist <= max_sqr_dist) {
+                                const pcl::PointXYZRGB &point =
+                                    (*cloud)[point_indices[i]];
 
-        png_write_end(png_ptr, NULL);
-        png_destroy_write_struct(&png_ptr, &info_ptr);
-        if (std::fclose(fp) == EOF)
-            throw std::system_error(errno, std::system_category(),
-                                    string("Error closing ") + filename.str());
+                                // dist = distance^4
+                                double dist = (double)sqr_dist * (double)sqr_dist;
+                                if (dist < min_safe_dist)
+                                    dist = min_safe_dist;
+
+                                r_sum += point.r / dist;
+                                g_sum += point.g / dist;
+                                b_sum += point.b / dist;
+                                weight_sum += 1.0/dist;
+                            }
+                        }
+
+                        double r = r_sum / weight_sum;
+                        double g = g_sum / weight_sum;
+                        double b = b_sum / weight_sum;
+                        if (isfinite(r) && isfinite(g) && isfinite(b)) {
+                            png_pixel[0] = std::lround(r);
+                            png_pixel[1] = std::lround(g);
+                            png_pixel[2] = std::lround(b);
+                        }
+                        else {
+                            cerr << "warning: error in color calculation" << endl;
+                            png_pixel[0] = 0;
+                            png_pixel[1] = 0;
+                            png_pixel[2] = 0;
+                        }
+                    }
+                }
+                png_write_row(png_ptr, png_row.data());
+            }
+
+            png_write_end(png_ptr, NULL);
+            png_destroy_write_struct(&png_ptr, &info_ptr);
+            if (std::fclose(fp) == EOF)
+                throw std::system_error(errno, std::system_category(),
+                                        string("Error closing ") + filename.str());
+        }
 
         polygon_id++;
     }
