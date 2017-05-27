@@ -53,6 +53,15 @@ static inline double clamp01(double val) {
 }
 
 
+static inline bool any_two_equal(const Vector *vertices, size_t len) {
+    for (size_t i = 0; i < len-1; ++i)
+        for (size_t j = i+1; j < len; ++j)
+            if (vertices[i] == vertices[j])
+                return true;
+    return false;
+}
+
+
 void generate(
     const std::string &cloudfile,
     const std::string &polygonfile,
@@ -147,42 +156,61 @@ void generate(
 
         // store polygon and its vertex and texture coordinates to X3D file
 
-        Vector vertices[polygon.vertices.size()];
-        for (size_t i=0; i < polygon.vertices.size(); ++i)
+        size_t num_vertices = polygon.vertices.size();
+        Vector vertices[num_vertices];
+        for (size_t i=0; i < num_vertices; ++i)
             vertices[i] = (*mesh_points)[polygon.vertices[i]];
 
-        x3dfile <<
-            "<Shape>"
-            "<IndexedFaceSet coordIndex=\"0";
-        for (size_t i=1; i < polygon.vertices.size(); ++i)
-            x3dfile << ' ' << i;
-        x3dfile << "\" texCoordIndex=\"0";
-        for (size_t i=1; i < polygon.vertices.size(); ++i)
-            x3dfile << ' ' << i;
+        bool shape_valid = true;
+        float texturecoords[num_vertices * 2];
+        float *texturecoord = texturecoords;
 
-        x3dfile << "\"><Coordinate point=\"" << vertices[0];
-        for (size_t i=1; i < polygon.vertices.size(); ++i)
-            x3dfile << ' ' << vertices[i];
-
-        x3dfile << "\"/><TextureCoordinate point=\"";
-        bool first = true;
         for (const Vector &vertex : vertices) {
             Vector relative_pos = vertex - origin;
             double u = u_unit.dot(relative_pos) / (u_max - u_min);
             double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
 
-            if (! first)
-                x3dfile << ' ';
-            x3dfile << clamp01(u) << ' ' << clamp01(v);
-            first = false;
+            if (! std::isfinite(u) || ! std::isfinite(v)) {
+                std::cerr <<
+                    "warning: error generating texture coordinates,"
+                    " skipping polygon" << std::endl;
+                if (any_two_equal(vertices, num_vertices))
+                    std::cerr << "         (probable cause: identical vertices)"
+                              << std::endl;
+
+                shape_valid = false;
+                break;
+            }
+
+            *(texturecoord++) = clamp01(u);
+            *(texturecoord++) = clamp01(v);
         }
 
-        x3dfile <<
-            "\"/></IndexedFaceSet>"
-            "<Appearance>"
-            "<ImageTexture url=\"texture" << polygon_id << ".png\"/>"
-            "</Appearance>"
-            "</Shape>\n";
+        if (shape_valid) {
+            x3dfile <<
+                "<Shape>"
+                "<IndexedFaceSet coordIndex=\"0";
+            for (size_t i=1; i < num_vertices; ++i)
+                x3dfile << ' ' << i;
+            x3dfile << "\" texCoordIndex=\"0";
+            for (size_t i=1; i < num_vertices; ++i)
+                x3dfile << ' ' << i;
+
+            x3dfile << "\"><Coordinate point=\"" << vertices[0];
+            for (size_t i=1; i < num_vertices; ++i)
+                x3dfile << ' ' << vertices[i];
+
+            x3dfile << "\"/><TextureCoordinate point=\"" << texturecoords[0];
+            for (size_t i=1; i < num_vertices * 2; ++i)
+                x3dfile << ' ' << texturecoords[i];
+
+            x3dfile <<
+                "\"/></IndexedFaceSet>"
+                "<Appearance>"
+                "<ImageTexture url=\"texture" << polygon_id << ".png\"/>"
+                "</Appearance>"
+                "</Shape>\n";
+        }
 
 
         // build texture using nearest-neighbor search
@@ -224,7 +252,7 @@ void generate(
                 int num_found = kdtree.nearestKSearch(
                     pos, points_per_texel, point_indices, point_sqr_distances);
 
-                if (num_found == 0) {
+                if (num_found <= 0) {
                     std::cerr << "warning: no points found near " << pos << std::endl;
                     png_pixel[0] = 0;
                     png_pixel[1] = 0;
@@ -236,7 +264,7 @@ void generate(
                     double g_sum = 0.0;
                     double b_sum = 0.0;
                     double weight_sum = 0.0;
-                    for (unsigned i=0; i<num_found; ++i) {
+                    for (int i=0; i<num_found; ++i) {
                         float sqr_dist = point_sqr_distances[i];
                         if (sqr_dist <= max_sqr_dist) {
                             const pcl::PointXYZRGB &point = (*cloud)[point_indices[i]];
