@@ -132,12 +132,14 @@ void generate(
         // Calculate vectors for determining 3D location of each texel.
         // Use first two sides as v and u axes.
 
-        Vector vertex1 = (*mesh_points)[polygon.vertices[0]];
-        Vector vertex2 = (*mesh_points)[polygon.vertices[1]];
-        Vector vertex3 = (*mesh_points)[polygon.vertices[2]];
+        size_t num_vertices = polygon.vertices.size();
+        boost::container::small_vector<Vector, 4> vertices;
+        vertices.reserve(num_vertices);
+        for (auto index : polygon.vertices)
+            vertices.push_back((*mesh_points)[index]);
 
-        Vector v_side = vertex2 - vertex1;
-        Vector u_side = vertex3 - vertex2;
+        Vector v_side = vertices[1] - vertices[0];
+        Vector u_side = vertices[2] - vertices[1];
 
         Vector u_unit = u_side.normalized();
         Vector v_unit = v_side.normalized();
@@ -149,30 +151,22 @@ void generate(
         double v_min = 0;
         double u_max = u_side.norm();
         double v_max = v_side.norm();
-        for (auto it = polygon.vertices.cbegin() + 3;
-             it != polygon.vertices.cend();  ++it)
-        {
-            Vector vertex = Vector((*mesh_points)[*it]) - vertex1;
-            double scalarproj_u = u_unit.dot(vertex);
-            double scalarproj_v = v_unit.dot(vertex);
+        for (auto it = vertices.cbegin() + 3; it != vertices.cend();  ++it) {
+            Vector relative_pos = *it - vertices[0];
+            double scalarproj_u = u_unit.dot(relative_pos);
+            double scalarproj_v = v_unit.dot(relative_pos);
             if (scalarproj_u > u_max) u_max = scalarproj_u;
             if (scalarproj_v > v_max) v_max = scalarproj_v;
             if (scalarproj_u < u_min) u_min = scalarproj_u;
             if (scalarproj_v < v_min) v_min = scalarproj_v;
         }
 
-        Vector origin = vertex1 + u_unit*u_min + v_unit*v_min;
+        Vector origin = vertices[0] + u_unit*u_min + v_unit*v_min;
         Vector u_texelstep = (u_unit*(u_max - u_min)) / texture_size;
         Vector v_texelstep = (v_unit*(v_max - v_min)) / texture_size;
 
 
         // store polygon and its vertex and texture coordinates to X3D file
-
-        size_t num_vertices = polygon.vertices.size();
-        boost::container::small_vector<Vector, 4> vertices;
-        vertices.reserve(num_vertices);
-        for (auto index : polygon.vertices)
-            vertices.push_back((*mesh_points)[index]);
 
         bool shape_valid = true;
         boost::container::small_vector<float, 4*2> texturecoords;
