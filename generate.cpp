@@ -6,6 +6,8 @@
 #include <limits>
 #include <stdexcept>
 #include <system_error>
+#include <boost/container/vector.hpp>
+#include <boost/container/small_vector.hpp>
 #include <pcl/io/auto_io.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/impl/point_types.hpp>
@@ -60,9 +62,12 @@ static inline double clamp01(double val) {
 }
 
 
-static inline bool any_two_equal(const Vector *vertices, size_t len) {
-    for (size_t i = 0; i < len-1; ++i)
-        for (size_t j = i+1; j < len; ++j)
+template <size_t N>
+static inline bool any_two_equal(
+    const boost::container::small_vector<Vector, N> &vertices)
+{
+    for (size_t i = 0; i < vertices.size() - 1; ++i)
+        for (size_t j = i+1; j < vertices.size(); ++j)
             if (vertices[i] == vertices[j])
                 return true;
     return false;
@@ -113,7 +118,8 @@ void generate(
 
     std::vector<int> point_indices(points_per_texel);
     std::vector<float> point_sqr_distances(points_per_texel);
-    png_byte png_row[texture_size * 3];
+    boost::container::vector<png_byte> png_row(
+        texture_size * 3, boost::container::default_init);
 
     unsigned polygon_id = 1;
 
@@ -163,13 +169,14 @@ void generate(
         // store polygon and its vertex and texture coordinates to X3D file
 
         size_t num_vertices = polygon.vertices.size();
-        Vector vertices[num_vertices];
-        for (size_t i=0; i < num_vertices; ++i)
-            vertices[i] = (*mesh_points)[polygon.vertices[i]];
+        boost::container::small_vector<Vector, 4> vertices;
+        vertices.reserve(num_vertices);
+        for (auto index : polygon.vertices)
+            vertices.push_back((*mesh_points)[index]);
 
         bool shape_valid = true;
-        float texturecoords[num_vertices * 2];
-        float *texturecoord = texturecoords;
+        boost::container::small_vector<float, 4*2> texturecoords;
+        texturecoords.reserve(num_vertices * 2);
 
         for (const Vector &vertex : vertices) {
             Vector relative_pos = vertex - origin;
@@ -180,15 +187,15 @@ void generate(
                 cerr <<
                     "warning: error generating texture coordinates,"
                     " skipping polygon" << endl;
-                if (any_two_equal(vertices, num_vertices))
+                if (any_two_equal(vertices))
                     cerr << "         (probable cause: identical vertices)" << endl;
 
                 shape_valid = false;
                 break;
             }
 
-            *(texturecoord++) = clamp01(u);
-            *(texturecoord++) = clamp01(v);
+            texturecoords.push_back(clamp01(u));
+            texturecoords.push_back(clamp01(v));
         }
 
         if (shape_valid) {
@@ -302,7 +309,7 @@ void generate(
                     }
                 }
             }
-            png_write_row(png_ptr, png_row);
+            png_write_row(png_ptr, png_row.data());
         }
 
         png_write_end(png_ptr, NULL);
