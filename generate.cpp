@@ -51,6 +51,11 @@ static inline std::ostream &operator<<(std::ostream &os, const Vector &v) {
 }
 
 
+class internal_error : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+
 // clamp texture coordinate between 0.0 and 1.0, because values
 // outside that are rounding errors
 static inline double clamp01(double val) {
@@ -62,15 +67,26 @@ static inline double clamp01(double val) {
 }
 
 
-template <size_t N>
-static inline bool any_two_equal(
-    const boost::container::small_vector<Vector, N> &vertices)
-{
-    for (size_t i = 0; i < vertices.size() - 1; ++i)
-        for (size_t j = i+1; j < vertices.size(); ++j)
-            if (vertices[i] == vertices[j])
-                return true;
-    return false;
+// rotate vertices until first 3 differ
+template <class T>
+static inline void rotate_until_ok(T &vertices) {
+    size_t tries_left = vertices.size() - 3;
+    while(true) {
+        if (vertices[0] != vertices[1] &&
+            vertices[1] != vertices[2] &&
+            vertices[2] != vertices[0])
+            return;
+
+        if (tries_left == 0)
+            throw internal_error(
+                "skipping polygon with too many identical vertices");
+        --tries_left;
+
+        Vector tmp = vertices[0];
+        for (size_t i=1; i<vertices.size(); ++i)
+            vertices[i-1] = vertices[i];
+        vertices[vertices.size() - 1] = tmp;
+    }
 }
 
 
@@ -128,71 +144,63 @@ void generate(
         cout << "processing polygon " << polygon_id << "/" << num_polygons
              << " (" << (100.0 * (polygon_id-1) / num_polygons) << "%)" << endl;
 
+        try {
+            // Calculate vectors for determining 3D location of each texel.
+            // Use first two sides with length > 0 as v and u axes.
 
-        // Calculate vectors for determining 3D location of each texel.
-        // Use first two sides as v and u axes.
+            size_t num_vertices = polygon.vertices.size();
+            boost::container::small_vector<Vector, 4> vertices;
+            vertices.reserve(num_vertices);
+            for (auto index : polygon.vertices)
+                vertices.push_back((*mesh_points)[index]);
 
-        size_t num_vertices = polygon.vertices.size();
-        boost::container::small_vector<Vector, 4> vertices;
-        vertices.reserve(num_vertices);
-        for (auto index : polygon.vertices)
-            vertices.push_back((*mesh_points)[index]);
+            rotate_until_ok(vertices);
+            Vector v_side = vertices[1] - vertices[0];
+            Vector u_side = vertices[2] - vertices[1];
 
-        Vector v_side = vertices[1] - vertices[0];
-        Vector u_side = vertices[2] - vertices[1];
+            Vector u_unit = u_side.normalized();
+            Vector v_unit = v_side.normalized();
 
-        Vector u_unit = u_side.normalized();
-        Vector v_unit = v_side.normalized();
-
-        // If there are more than 3 vertices, check if any of them are
-        // outside the parallelogram defined by the first 3 vertices,
-        // and expand area as needed.
-        double u_min = 0;
-        double v_min = 0;
-        double u_max = u_side.norm();
-        double v_max = v_side.norm();
-        for (auto it = vertices.cbegin() + 3; it != vertices.cend();  ++it) {
-            Vector relative_pos = *it - vertices[0];
-            double scalarproj_u = u_unit.dot(relative_pos);
-            double scalarproj_v = v_unit.dot(relative_pos);
-            if (scalarproj_u > u_max) u_max = scalarproj_u;
-            if (scalarproj_v > v_max) v_max = scalarproj_v;
-            if (scalarproj_u < u_min) u_min = scalarproj_u;
-            if (scalarproj_v < v_min) v_min = scalarproj_v;
-        }
-
-        Vector origin = vertices[0] + u_unit*u_min + v_unit*v_min;
-        Vector u_texelstep = (u_unit*(u_max - u_min)) / texture_size;
-        Vector v_texelstep = (v_unit*(v_max - v_min)) / texture_size;
-
-
-        // calculate texture coordinates
-
-        bool shape_valid = true;
-        boost::container::small_vector<float, 4*2> texturecoords;
-        texturecoords.reserve(num_vertices * 2);
-
-        for (const Vector &vertex : vertices) {
-            Vector relative_pos = vertex - origin;
-            double u = u_unit.dot(relative_pos) / (u_max - u_min);
-            double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
-
-            if (! isfinite(u) || ! isfinite(v)) {
-                cerr <<
-                    "warning: error generating texture coordinates,"
-                    " skipping polygon" << endl;
-                if (any_two_equal(vertices))
-                    cerr << "         (probable cause: identical vertices)" << endl;
-
-                shape_valid = false;
-                break;
+            // If there are more than 3 vertices, check if any of them
+            // are outside the parallelogram defined by the first 3
+            // vertices, and expand area as needed.
+            double u_min = 0;
+            double v_min = 0;
+            double u_max = u_side.norm();
+            double v_max = v_side.norm();
+            for (auto it = vertices.cbegin() + 3; it != vertices.cend();  ++it) {
+                Vector relative_pos = *it - vertices[0];
+                double scalarproj_u = u_unit.dot(relative_pos);
+                double scalarproj_v = v_unit.dot(relative_pos);
+                if (scalarproj_u > u_max) u_max = scalarproj_u;
+                if (scalarproj_v > v_max) v_max = scalarproj_v;
+                if (scalarproj_u < u_min) u_min = scalarproj_u;
+                if (scalarproj_v < v_min) v_min = scalarproj_v;
             }
 
-            texturecoords.push_back(clamp01(u));
-            texturecoords.push_back(clamp01(v));
-        }
+            Vector origin = vertices[0] + u_unit*u_min + v_unit*v_min;
+            Vector u_texelstep = (u_unit*(u_max - u_min)) / texture_size;
+            Vector v_texelstep = (v_unit*(v_max - v_min)) / texture_size;
 
-        if (shape_valid) {
+
+            // calculate texture coordinates
+
+            boost::container::small_vector<float, 4*2> texturecoords;
+            texturecoords.reserve(num_vertices * 2);
+
+            for (const Vector &vertex : vertices) {
+                Vector relative_pos = vertex - origin;
+                double u = u_unit.dot(relative_pos) / (u_max - u_min);
+                double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
+
+                if (! isfinite(u) || ! isfinite(v))
+                    throw internal_error(
+                        "error generating texture coordinates, skipping polygon");
+
+                texturecoords.push_back(clamp01(u));
+                texturecoords.push_back(clamp01(v));
+            }
+
             // store polygon and its vertex and texture coordinates to X3D file
 
             x3dfile <<
@@ -313,6 +321,9 @@ void generate(
             if (std::fclose(fp) == EOF)
                 throw std::system_error(errno, std::system_category(),
                                         string("Error closing ") + filename.str());
+        }
+        catch (internal_error &e) {
+            cerr << "warning: " << e.what() << endl;
         }
 
         polygon_id++;
