@@ -92,7 +92,8 @@ void generate(
 
     // open output file
     std::ofstream x3dfile(outfile, std::ios::binary);
-    x3dfile << std::fixed;  // don't use scientific format for floats
+    // print floats with just enough digits for full precision
+    x3dfile.precision(std::numeric_limits<float>::max_digits10);
     x3dfile <<
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
         "<!DOCTYPE X3D PUBLIC \"ISO//Web3D//DTD X3D 3.3//EN\""
