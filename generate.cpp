@@ -67,26 +67,25 @@ static inline double clamp01(double val) {
 }
 
 
-// rotate vertices until first 3 differ
+// merge identical consecutive vertices
 template <class T>
-static inline void rotate_until_ok(T &vertices) {
-    size_t tries_left = vertices.size() - 3;
-    while(true) {
-        if (vertices[0] != vertices[1] &&
-            vertices[1] != vertices[2] &&
-            vertices[2] != vertices[0])
-            return;
+static inline void merge_identical_vertices(T &vertices) {
+    if (vertices.size() < 3)
+        throw internal_error("skipping polygon with fewer than 3 vertices");
 
-        if (tries_left == 0)
-            throw internal_error(
-                "skipping polygon with too many identical vertices");
-        --tries_left;
+    auto it = vertices.cbegin() + 1;
+    do {
+        if (it[0] == it[-1])
+            it = vertices.erase(it);
+        else
+            ++it;
+    } while (it != vertices.cend());
+    if (! vertices.empty() && vertices.front() == vertices.back())
+        vertices.pop_back();
 
-        Vector tmp = vertices[0];
-        for (size_t i=1; i<vertices.size(); ++i)
-            vertices[i-1] = vertices[i];
-        vertices[vertices.size() - 1] = tmp;
-    }
+    if (vertices.size() < 3)
+        throw internal_error(
+            "skipping polygon with too many identical vertices");
 }
 
 
@@ -148,13 +147,12 @@ void generate(
             // Calculate vectors for determining 3D location of each texel.
             // Use first two sides with length > 0 as v and u axes.
 
-            size_t num_vertices = polygon.vertices.size();
             boost::container::small_vector<Vector, 4> vertices;
-            vertices.reserve(num_vertices);
+            vertices.reserve(polygon.vertices.size());
             for (auto index : polygon.vertices)
                 vertices.push_back((*mesh_points)[index]);
 
-            rotate_until_ok(vertices);
+            merge_identical_vertices(vertices);
             Vector v_side = vertices[1] - vertices[0];
             Vector u_side = vertices[2] - vertices[1];
 
@@ -186,7 +184,7 @@ void generate(
             // calculate texture coordinates
 
             boost::container::small_vector<float, 4*2> texturecoords;
-            texturecoords.reserve(num_vertices * 2);
+            texturecoords.reserve(vertices.size() * 2);
 
             for (const Vector &vertex : vertices) {
                 Vector relative_pos = vertex - origin;
@@ -206,18 +204,18 @@ void generate(
             x3dfile <<
                 "<Shape>"
                 "<IndexedFaceSet coordIndex=\"0";
-            for (size_t i=1; i < num_vertices; ++i)
+            for (size_t i=1; i < vertices.size(); ++i)
                 x3dfile << ' ' << i;
             x3dfile << "\" texCoordIndex=\"0";
-            for (size_t i=1; i < num_vertices; ++i)
+            for (size_t i=1; i < vertices.size(); ++i)
                 x3dfile << ' ' << i;
 
             x3dfile << "\"><Coordinate point=\"" << vertices[0];
-            for (size_t i=1; i < num_vertices; ++i)
+            for (size_t i=1; i < vertices.size(); ++i)
                 x3dfile << ' ' << vertices[i];
 
             x3dfile << "\"/><TextureCoordinate point=\"" << texturecoords[0];
-            for (size_t i=1; i < num_vertices * 2; ++i)
+            for (size_t i=1; i < vertices.size() * 2; ++i)
                 x3dfile << ' ' << texturecoords[i];
 
             x3dfile <<
