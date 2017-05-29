@@ -3,6 +3,7 @@
 #include <fstream>
 #include <cstdio>
 #include <cmath>
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 #include <system_error>
@@ -24,6 +25,9 @@ using std::cout;
 using std::cerr;
 using std::endl;
 using std::isfinite;
+
+
+const unsigned MIN_TEXTURE_SIZE = 16;
 
 
 class internal_error : public std::runtime_error {
@@ -65,7 +69,7 @@ private:
     const string filename;
 
 public:
-    PngWriter(unsigned polygon_id, unsigned texture_size)
+    PngWriter(unsigned polygon_id, unsigned texture_width, unsigned texture_height)
         : filename("texture" + std::to_string(polygon_id) + ".png")
     {
         // init png writing and write header
@@ -99,7 +103,7 @@ public:
         png_init_io(png_ptr, fp);
         png_set_IHDR(
             png_ptr, info_ptr,
-            texture_size, texture_size,  // width, height
+            texture_width, texture_height,
             8, PNG_COLOR_TYPE_RGB,  // 8-bit RGB
             PNG_INTERLACE_NONE,
             PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
@@ -171,7 +175,7 @@ void generate(
     const string &cloudfile,
     const string &polygonfile,
     const string &outfile,
-    unsigned texture_size,
+    unsigned max_texture_size,
     unsigned points_per_texel,
     float max_sqr_dist)
 {
@@ -195,6 +199,20 @@ void generate(
         throw std::runtime_error("Error opening " + polygonfile);
     pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
+    // find longest side of any polygon and store it as a base value
+    // for texture size calculations
+    double max_polygon_size = 0.0;
+    for (const pcl::Vertices &polygon : mesh->polygons) {
+        Vector previous = (*mesh_points)[polygon.vertices.back()];
+        for (auto index : polygon.vertices) {
+            Vector current = (*mesh_points)[index];
+            double len = (current - previous).norm();
+            if (len > max_polygon_size)
+                max_polygon_size = len;
+            previous = current;
+        }
+    }
+
     // open output file
     std::ofstream x3dfile(outfile, std::ios::binary);
     // print floats with just enough digits for full precision
@@ -212,7 +230,7 @@ void generate(
     std::vector<int> point_indices(points_per_texel);
     std::vector<float> point_sqr_distances(points_per_texel);
     boost::container::vector<png_byte> png_row(
-        texture_size * 3, boost::container::default_init);
+        max_texture_size * 3, boost::container::default_init);
 
     unsigned polygon_id = 1;
 
@@ -253,10 +271,24 @@ void generate(
                 if (scalarproj_u < u_min) u_min = scalarproj_u;
                 if (scalarproj_v < v_min) v_min = scalarproj_v;
             }
+            double u_size = u_max - u_min;
+            double v_size = v_max - v_min;
+
+            // Calculate texture size from the size ratio of this
+            // polygon and the largest one. Use powers of two as size
+            // divisors favoring larger texture size.
+            unsigned texture_width = std::max(
+                MIN_TEXTURE_SIZE,
+                max_texture_size >> int(
+                    std::floor(std::log2(max_polygon_size / u_size))));
+            unsigned texture_height = std::max(
+                MIN_TEXTURE_SIZE,
+                max_texture_size >> int(
+                    std::floor(std::log2(max_polygon_size / v_size))));
 
             Vector origin = vertices[0] + u_unit*u_min + v_unit*v_min;
-            Vector u_texelstep = (u_unit*(u_max - u_min)) / texture_size;
-            Vector v_texelstep = (v_unit*(v_max - v_min)) / texture_size;
+            Vector u_texelstep = (u_unit*u_size) / texture_width;
+            Vector v_texelstep = (v_unit*v_size) / texture_height;
 
 
             // calculate texture coordinates
@@ -266,8 +298,8 @@ void generate(
 
             for (const Vector &vertex : vertices) {
                 Vector relative_pos = vertex - origin;
-                double u = u_unit.dot(relative_pos) / (u_max - u_min);
-                double v = 1.0 - (v_unit.dot(relative_pos) / (v_max - v_min));
+                double u = u_unit.dot(relative_pos) / u_size;
+                double v = 1.0 - (v_unit.dot(relative_pos) / v_size);
 
                 if (! isfinite(u) || ! isfinite(v))
                     throw internal_error(
@@ -307,14 +339,14 @@ void generate(
             // build texture using nearest-neighbor search
 
             // init png writing and write header
-            PngWriter png(polygon_id, texture_size);
+            PngWriter png(polygon_id, texture_width, texture_height);
 
             // generate texture
-            for (unsigned y=0; y<texture_size; ++y) {
+            for (unsigned y=0; y<texture_height; ++y) {
                 Vector row_origin = origin + v_texelstep*y;
 
                 #pragma omp parallel for firstprivate(point_indices, point_sqr_distances)
-                for (unsigned x=0; x<texture_size; ++x) {
+                for (unsigned x=0; x<texture_width; ++x) {
                     png_byte *png_pixel = &png_row[x*3];
                     pcl::PointXYZRGB pos = Vector(row_origin + u_texelstep*x);
 
@@ -328,7 +360,7 @@ void generate(
                         png_pixel[2] = 0;
                     }
                     else {
-                        // calculate weighted average of point colors
+                        // calculate distance-weighted average of point colors
                         double r_sum = 0.0;
                         double g_sum = 0.0;
                         double b_sum = 0.0;
