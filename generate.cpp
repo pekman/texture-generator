@@ -26,6 +26,11 @@ using std::endl;
 using std::isfinite;
 
 
+class internal_error : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+
 // vector class with type conversions from and to PCL point types
 class Vector : public Eigen::Vector3d {
 public:
@@ -51,8 +56,81 @@ static inline std::ostream &operator<<(std::ostream &os, const Vector &v) {
 }
 
 
-class internal_error : public std::runtime_error {
-    using std::runtime_error::runtime_error;
+// RAII-based PNG writer class. Separates gory libpng details from main code.
+class PngWriter {
+private:
+    std::FILE *fp;
+    png_structp png_ptr;
+    png_infop info_ptr;
+    const string filename;
+
+public:
+    PngWriter(unsigned polygon_id, unsigned texture_size)
+        : filename("texture" + std::to_string(polygon_id) + ".png")
+    {
+        // init png writing and write header
+
+        fp = std::fopen(filename.c_str(), "wb");
+        if (fp == NULL)
+            throw std::system_error(
+                errno, std::system_category(), "Error opening " + filename);
+
+        png_ptr = png_create_write_struct(
+            PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+        if (png_ptr == NULL) {
+            std::fclose(fp);
+            throw std::runtime_error("Error: png_create_write_struct failed");
+        }
+
+        info_ptr = png_create_info_struct(png_ptr);
+        if (info_ptr == NULL) {
+            png_destroy_write_struct(&png_ptr, NULL);
+            std::fclose(fp);
+            throw std::runtime_error("Error: png_create_info_struct failed");
+        }
+
+        if (setjmp(png_jmpbuf(png_ptr))) {
+            png_destroy_write_struct(&png_ptr, &info_ptr);
+            std::fclose(fp);
+            throw std::runtime_error(
+                "Error generating or writing png header to " + filename);
+        }
+
+        png_init_io(png_ptr, fp);
+        png_set_IHDR(
+            png_ptr, info_ptr,
+            texture_size, texture_size,  // width, height
+            8, PNG_COLOR_TYPE_RGB,  // 8-bit RGB
+            PNG_INTERLACE_NONE,
+            PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+        png_write_info(png_ptr, info_ptr);
+    }
+
+    ~PngWriter() {
+        png_destroy_write_struct(&png_ptr, &info_ptr);
+        if (fp != NULL)
+            std::fclose(fp);
+    }
+
+    void write_row(png_byte *data) {
+        if (setjmp(png_jmpbuf(png_ptr)))
+            throw std::runtime_error("Error writing png data to " + filename);
+
+        png_write_row(png_ptr, data);
+    }
+
+    void write_end() {
+        if (setjmp(png_jmpbuf(png_ptr)))
+            throw std::runtime_error("Error writing png footer to " + filename);
+
+        png_write_end(png_ptr, NULL);
+
+        int status = std::fclose(fp);
+        fp = NULL;
+        if (status == EOF)
+            throw std::system_error(
+                errno, std::system_category(), "Error closing " + filename);
+    }
 };
 
 
@@ -105,7 +183,7 @@ void generate(
     // load input point cloud
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
     if (pcl::io::load(cloudfile, *cloud) == -1)
-        throw std::runtime_error(string("Error opening ") + cloudfile);
+        throw std::runtime_error("Error opening " + cloudfile);
     pcl::KdTreeFLANN<pcl::PointXYZRGB> kdtree;
     kdtree.setInputCloud(cloud);
 
@@ -114,7 +192,7 @@ void generate(
     pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
     // if (pcl::io::load(polygonfile, *mesh) == -1) {
     if (pcl::io::loadPLYFile(polygonfile, *mesh) == -1)
-        throw std::runtime_error(string("Error opening ") + polygonfile);
+        throw std::runtime_error("Error opening " + polygonfile);
     pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
     // open output file
@@ -229,29 +307,7 @@ void generate(
             // build texture using nearest-neighbor search
 
             // init png writing and write header
-            std::ostringstream filename;
-            filename << "texture" << polygon_id << ".png";
-            std::FILE *fp = std::fopen(filename.str().c_str(), "wb");
-            if (! fp)
-                throw std::system_error(errno, std::system_category(),
-                                        string("Error opening ") + filename.str());
-            png_structp png_ptr = png_create_write_struct(
-                PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-            if (! png_ptr)
-                throw std::runtime_error("Error: png_create_write_struct failed");
-            png_infop info_ptr = png_create_info_struct(png_ptr);
-            if (! info_ptr)
-                throw std::runtime_error("Error: png_create_info_struct failed");
-            if (setjmp(png_jmpbuf(png_ptr)))
-                throw std::runtime_error("Error: unknown png writing error");
-            png_init_io(png_ptr, fp);
-            png_set_IHDR(
-                png_ptr, info_ptr,
-                texture_size, texture_size,  // width, height
-                8, PNG_COLOR_TYPE_RGB,  // 8-bit RGB
-                PNG_INTERLACE_NONE,
-                PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
-            png_write_info(png_ptr, info_ptr);
+            PngWriter png(polygon_id, texture_size);
 
             // generate texture
             for (unsigned y=0; y<texture_size; ++y) {
@@ -311,14 +367,10 @@ void generate(
                         }
                     }
                 }
-                png_write_row(png_ptr, png_row.data());
+                png.write_row(png_row.data());
             }
 
-            png_write_end(png_ptr, NULL);
-            png_destroy_write_struct(&png_ptr, &info_ptr);
-            if (std::fclose(fp) == EOF)
-                throw std::system_error(errno, std::system_category(),
-                                        string("Error closing ") + filename.str());
+            png.write_end();
         }
         catch (internal_error &e) {
             cerr << "warning: " << e.what() << endl;
