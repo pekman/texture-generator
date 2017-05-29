@@ -17,6 +17,7 @@ int main(int argc, char *argv[])
     unsigned texture_size;
     unsigned points_per_texel;
     float max_distance;
+    float dist_power_param;
 
     po::options_description pos("Positional parameters");
     pos.add_options()
@@ -41,6 +42,11 @@ int main(int argc, char *argv[])
         ( "max-distance,d",
           po::value<float>(&max_distance)->default_value(INFINITY),
           "limit point search distance" )
+        ( "dist-power-param,p",
+          po::value<float>(&dist_power_param)->default_value(3.0),
+          "distance power parameter."
+          " Greater values give greater influence to points closer to texel center."
+          " Should be >= 3.0.")
         ;
 
     try {
@@ -80,7 +86,8 @@ int main(int argc, char *argv[])
             outfile,
             texture_size,
             points_per_texel,
-            max_distance * max_distance);
+            max_distance * max_distance,
+            dist_power_param);
     }
     catch (runtime_error &e) {
         cerr << e.what() << endl;

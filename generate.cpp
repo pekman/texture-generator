@@ -177,7 +177,8 @@ void generate(
     const string &outfile,
     unsigned max_texture_size,
     unsigned points_per_texel,
-    float max_sqr_dist)
+    float max_sqr_dist,
+    float dist_power_param)
 {
     // smallest distance that can be safely used in inverse distance weighting
     double min_safe_dist =
@@ -360,7 +361,8 @@ void generate(
                         png_pixel[2] = 0;
                     }
                     else {
-                        // calculate distance-weighted average of point colors
+                        // calculate texel color from point colors
+                        // using inverse distance weighting
                         double r_sum = 0.0;
                         double g_sum = 0.0;
                         double b_sum = 0.0;
@@ -371,10 +373,10 @@ void generate(
                                 const pcl::PointXYZRGB &point =
                                     (*cloud)[point_indices[i]];
 
-                                // dist = distance^4
-                                double dist = (double)sqr_dist * (double)sqr_dist;
-                                if (dist < min_safe_dist)
-                                    dist = min_safe_dist;
+                                double dist = std::max(
+                                    min_safe_dist,
+                                    std::pow<double>(
+                                        sqr_dist, dist_power_param / 2.0));
 
                                 r_sum += point.r / dist;
                                 g_sum += point.g / dist;
