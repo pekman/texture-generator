@@ -201,7 +201,8 @@ void generate(
     pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
     // find longest side of any polygon and store it as a base value
-    // for texture size calculations
+    // for texture size calculations (note: for polygons with more
+    // than 4 sides, the value will probably be too small)
     double max_polygon_size = 0.0;
     for (const pcl::Vertices &polygon : mesh->polygons) {
         Vector previous = (*mesh_points)[polygon.vertices.back()];

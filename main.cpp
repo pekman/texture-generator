@@ -34,19 +34,25 @@ int main(int argc, char *argv[])
     opts.add_options()
         ( "help,h", "show help" )
         ( "texture-size,s",
-          po::value<unsigned>(&texture_size)->default_value(256),
-          "texture size (width and height)")
+          po::value<unsigned>(&texture_size)
+          ->default_value(256)->value_name("int"),
+          "max testure size. The largest polygon by either width or height"
+          " will have this as their texture width or height. Smaller"
+          " polygons will have smaller textures." )
         ( "points-per-texel,k",
-          po::value<unsigned>(&points_per_texel)->default_value(1),
+          po::value<unsigned>(&points_per_texel)
+          ->default_value(1)->value_name("int"),
           "number of points per texel" )
         ( "max-distance,d",
-          po::value<float>(&max_distance)->default_value(INFINITY),
+          po::value<float>(&max_distance)
+          ->default_value(INFINITY)->value_name("float"),
           "limit point search distance" )
         ( "dist-power-param,p",
-          po::value<float>(&dist_power_param)->default_value(3.0),
+          po::value<float>(&dist_power_param)
+          ->default_value(3.0)->value_name("float"),
           "distance power parameter."
-          " Greater values give greater influence to points closer to texel center."
-          " Should be >= 3.0.")
+          " Greater values give greater influence to points closer to texel"
+          " center. Should be >= 3.0." )
         ;
 
     try {
@@ -63,7 +69,8 @@ int main(int argc, char *argv[])
             cout << endl;
             cout << "  cloudfile      input point cloud file" << endl;
             cout << "  polygonfile    input polygon file" << endl;
-            cout << "  outfile        output file name with or without extension" << endl;
+            cout << "  outfile        output file name with or without extension"
+                 << endl;
             cout << endl;
             cout << opts << endl;
             return vm.count("help") ? 0 : 2;
