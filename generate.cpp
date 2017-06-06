@@ -288,18 +288,26 @@ void generate(
                 max_texture_size >> int(
                     std::floor(std::log2(max_polygon_size / v_size))));
 
-            Vector origin = vertices[0] + u_unit*u_min + v_unit*v_min;
-            Vector u_texelstep = (u_unit*u_size) / texture_width;
-            Vector v_texelstep = (v_unit*v_size) / texture_height;
+            // Calculate vectors for calculating center of each
+            // texel. For edge texels, the u or v distance from texel
+            // center to the bounding parallelogram side is 0.5 *
+            // texel width or height.
+            Vector u_texelstep = (u_unit*u_size) / (texture_width + 1);
+            Vector v_texelstep = (v_unit*v_size) / (texture_height + 1);
+            Vector texel_origin =
+                vertices[0] +
+                u_unit*u_min + 0.5*u_texelstep +
+                v_unit*v_min + 0.5*v_texelstep;
 
 
             // calculate texture coordinates
 
             boost::container::small_vector<float, 4*2> texturecoords;
             texturecoords.reserve(vertices.size() * 2);
+            Vector polygon_origin = vertices[0] + u_unit*u_min + v_unit*v_min;
 
             for (const Vector &vertex : vertices) {
-                Vector relative_pos = vertex - origin;
+                Vector relative_pos = vertex - polygon_origin;
                 double u = u_unit.dot(relative_pos) / u_size;
                 double v = 1.0 - (v_unit.dot(relative_pos) / v_size);
 
@@ -338,14 +346,14 @@ void generate(
                 "</Shape>\n";
 
 
-            // build texture using nearest-neighbor search
+            // build texture using k-nearest-neighbor search
 
             // init png writing and write header
             PngWriter png(polygon_id, texture_width, texture_height);
 
             // generate texture
             for (unsigned y=0; y<texture_height; ++y) {
-                Vector row_origin = origin + v_texelstep*y;
+                Vector row_origin = texel_origin + v_texelstep*y;
 
                 #pragma omp parallel for firstprivate(point_indices, point_sqr_distances)
                 for (unsigned x=0; x<texture_width; ++x) {
