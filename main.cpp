@@ -18,6 +18,7 @@ int main(int argc, char *argv[])
     unsigned points_per_texel;
     float max_distance;
     float dist_power_param;
+    bool backface;
 
     po::options_description pos("Positional parameters");
     pos.add_options()
@@ -53,6 +54,9 @@ int main(int argc, char *argv[])
           "distance power parameter."
           " Greater values give greater influence to points closer to texel"
           " center. Should be >= 3.0." )
+        ( "backface,b",
+          po::bool_switch(&backface),
+          "for each polygon, add polygon facing the opposite direction")
         ;
 
     try {
@@ -94,7 +98,8 @@ int main(int argc, char *argv[])
             texture_size,
             points_per_texel,
             max_distance * max_distance,
-            dist_power_param);
+            dist_power_param,
+            backface);
     }
     catch (runtime_error &e) {
         cerr << e.what() << endl;

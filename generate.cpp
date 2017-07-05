@@ -183,7 +183,8 @@ void generate(
     unsigned max_texture_size,
     unsigned points_per_texel,
     float max_sqr_dist,
-    float dist_power_param)
+    float dist_power_param,
+    bool backface)
 {
     // smallest distance that can be safely used in inverse distance weighting
     double min_safe_dist =
@@ -366,6 +367,33 @@ void generate(
                 "<ImageTexture url=\"texture" << polygon_id << ".png\"/>"
                 "</Appearance>"
                 "</Shape>\n";
+
+            if (backface) {
+                // Add backface. Use same coordinates in opposite order.
+                x3dfile <<
+                    "<Shape>"
+                    "<IndexedFaceSet coordIndex=\"";
+                for (size_t i = vertices.size() - 1;  i > 0;  --i)
+                    x3dfile << i << ' ';
+                x3dfile << "0\" texCoordIndex=\"";
+                for (size_t i = vertices.size() - 1;  i > 0;  --i)
+                    x3dfile << i << ' ';
+
+                x3dfile << "0\"><Coordinate point=\"" << vertices[0];
+                for (size_t i=1; i < vertices.size(); ++i)
+                    x3dfile << ' ' << vertices[i];
+
+                x3dfile << "\"/><TextureCoordinate point=\"" << texturecoords[0];
+                for (size_t i=1; i < vertices.size() * 2; ++i)
+                    x3dfile << ' ' << texturecoords[i];
+
+                x3dfile <<
+                    "\"/></IndexedFaceSet>"
+                    "<Appearance>"
+                    "<ImageTexture url=\"texture" << polygon_id << ".png\"/>"
+                    "</Appearance>"
+                    "</Shape>\n";
+            }
 
 
             // build texture using k-nearest-neighbor search

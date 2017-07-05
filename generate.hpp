@@ -9,4 +9,5 @@ void generate(
     unsigned max_texture_size,
     unsigned points_per_texel,
     float max_sqr_dist,
-    float dist_power_param);
+    float dist_power_param,
+    bool backface);
