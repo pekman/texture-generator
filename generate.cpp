@@ -70,7 +70,10 @@ private:
     const string filename;
 
 public:
-    PngWriter(unsigned polygon_id, unsigned texture_width, unsigned texture_height)
+    PngWriter(
+        unsigned polygon_id,
+        unsigned texture_width, unsigned texture_height,
+        bool alpha)
         : filename("texture" + std::to_string(polygon_id) + ".png")
     {
         // init png writing and write header
@@ -105,7 +108,8 @@ public:
         png_set_IHDR(
             png_ptr, info_ptr,
             texture_width, texture_height,
-            8, PNG_COLOR_TYPE_RGB,  // 8-bit RGB
+            8,  // 8 bits per channel
+            alpha ? PNG_COLOR_TYPE_RGB_ALPHA : PNG_COLOR_TYPE_RGB,
             PNG_INTERLACE_NONE,
             PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
         png_write_info(png_ptr, info_ptr);
@@ -185,6 +189,10 @@ void generate(
     double min_safe_dist =
         (256 * points_per_texel) / std::numeric_limits<double>::max();
 
+    // if max_sqr_dist given, use alpha channel in PNG
+    bool alpha = isfinite(max_sqr_dist);
+    unsigned pixel_size = alpha ? 4 : 3;
+
 
     // load input point cloud
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
@@ -233,7 +241,7 @@ void generate(
     std::vector<int> point_indices(points_per_texel);
     std::vector<float> point_sqr_distances(points_per_texel);
     boost::container::vector<png_byte> png_row(
-        max_texture_size * 3, boost::container::default_init);
+        max_texture_size * pixel_size, boost::container::default_init);
 
     unsigned polygon_id = 1;
 
@@ -363,7 +371,7 @@ void generate(
             // build texture using k-nearest-neighbor search
 
             // init png writing and write header
-            PngWriter png(polygon_id, texture_width, texture_height);
+            PngWriter png(polygon_id, texture_width, texture_height, alpha);
 
             // generate texture
             for (unsigned y=0; y<texture_height; ++y) {
@@ -371,17 +379,19 @@ void generate(
 
                 #pragma omp parallel for firstprivate(point_indices, point_sqr_distances)
                 for (unsigned x=0; x<texture_width; ++x) {
-                    png_byte *png_pixel = &png_row[x*3];
+                    png_byte *png_pixel = &png_row[x * pixel_size];
                     pcl::PointXYZRGB pos = Vector(row_origin + u_texelstep*x);
 
                     int num_found = kdtree.nearestKSearch(
                         pos, points_per_texel, point_indices, point_sqr_distances);
 
                     if (num_found <= 0) {
-                        cerr << "warning: no points found near " << pos << endl;
+                        cerr << "warning: no points found for " << pos << endl;
                         png_pixel[0] = 0;
                         png_pixel[1] = 0;
                         png_pixel[2] = 0;
+                        if (alpha)
+                            png_pixel[3] = 0;
                     }
                     else {
                         // calculate texel color from point colors
@@ -408,19 +418,33 @@ void generate(
                             }
                         }
 
-                        double r = r_sum / weight_sum;
-                        double g = g_sum / weight_sum;
-                        double b = b_sum / weight_sum;
-                        if (isfinite(r) && isfinite(g) && isfinite(b)) {
-                            png_pixel[0] = std::lround(r);
-                            png_pixel[1] = std::lround(g);
-                            png_pixel[2] = std::lround(b);
-                        }
-                        else {
-                            cerr << "warning: error in color calculation" << endl;
+                        if (alpha && weight_sum == 0.0) {
+                            // None of points found were within distance limit.
+                            // Add transparent texel.
                             png_pixel[0] = 0;
                             png_pixel[1] = 0;
                             png_pixel[2] = 0;
+                            png_pixel[3] = 0;
+                        }
+                        else {
+                            double r = r_sum / weight_sum;
+                            double g = g_sum / weight_sum;
+                            double b = b_sum / weight_sum;
+                            if (isfinite(r) && isfinite(g) && isfinite(b)) {
+                                png_pixel[0] = std::lround(r);
+                                png_pixel[1] = std::lround(g);
+                                png_pixel[2] = std::lround(b);
+                                if (alpha)
+                                    png_pixel[3] = 0xff;
+                            }
+                            else {
+                                cerr << "warning: error in color calculation" << endl;
+                                png_pixel[0] = 0;
+                                png_pixel[1] = 0;
+                                png_pixel[2] = 0;
+                                if (alpha)
+                                    png_pixel[3] = 0;
+                            }
                         }
                     }
                 }
