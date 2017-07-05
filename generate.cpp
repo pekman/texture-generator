@@ -16,6 +16,7 @@
 #include <pcl/conversions.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <Eigen/Dense>
+#include <Eigen/LU>
 #include <png.h>
 #include "generate.hpp"
 
@@ -304,19 +305,32 @@ void generate(
 
             boost::container::small_vector<float, 4*2> texturecoords;
             texturecoords.reserve(vertices.size() * 2);
-            Vector polygon_origin = vertices[0] + u_unit*u_min + v_unit*v_min;
+
+            // Make transformation matrix for change of basis from
+            // standard basis point cloud coordinates to u-v texture
+            // coordinates. First, make inverse of the matrix. Set its
+            // columns to vectors representing u-side and inverse
+            // v-side of the parallelogram, and a dummy w vector.
+            Eigen::Matrix3d basis_change_inv;
+            basis_change_inv <<
+                u_unit * u_size,
+                -v_unit * v_size,
+                // this can be anything orthogonal to both u_unit and v_unit:
+                u_unit.cross(v_unit);
+            Eigen::Matrix3d basis_change = basis_change_inv.inverse();
+
+            Vector polygon_origin = vertices[0] + u_unit*u_min + v_unit*v_max;
 
             for (const Vector &vertex : vertices) {
                 Vector relative_pos = vertex - polygon_origin;
-                double u = u_unit.dot(relative_pos) / u_size;
-                double v = 1.0 - (v_unit.dot(relative_pos) / v_size);
+                Vector texture_coord = basis_change * relative_pos;
 
-                if (! isfinite(u) || ! isfinite(v))
+                if (! isfinite(texture_coord.x()) || ! isfinite(texture_coord.y()))
                     throw internal_error(
                         "error generating texture coordinates, skipping polygon");
 
-                texturecoords.push_back(clamp01(u));
-                texturecoords.push_back(clamp01(v));
+                texturecoords.push_back(clamp01(texture_coord.x()));
+                texturecoords.push_back(clamp01(texture_coord.y()));
             }
 
             // store polygon and its vertex and texture coordinates to X3D file
