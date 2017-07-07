@@ -291,12 +291,14 @@ void generate(
             // divisors favoring larger texture size.
             unsigned texture_width = std::max(
                 MIN_TEXTURE_SIZE,
-                max_texture_size >> int(
-                    std::floor(std::log2(max_polygon_size / u_size))));
+                max_texture_size >> std::max(
+                    0,
+                    int(std::floor(std::log2(max_polygon_size / u_size)))));
             unsigned texture_height = std::max(
                 MIN_TEXTURE_SIZE,
-                max_texture_size >> int(
-                    std::floor(std::log2(max_polygon_size / v_size))));
+                max_texture_size >> std::max(
+                    0,
+                    int(std::floor(std::log2(max_polygon_size / v_size)))));
 
             // Calculate vectors for calculating center of each
             // texel. For edge texels, the u or v distance from texel
