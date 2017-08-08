@@ -29,6 +29,7 @@ using std::isfinite;
 
 
 const unsigned MIN_TEXTURE_SIZE = 16;
+const double MAX_PLANE_ERROR = 1e-6;
 
 
 class internal_error : public std::runtime_error {
@@ -196,32 +197,86 @@ void generate(
 
 
     // load input point cloud
+    cout << "loading point cloud" << endl;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
     if (pcl::io::load(cloudfile, *cloud) == -1)
         throw std::runtime_error("Error opening " + cloudfile);
     pcl::KdTreeFLANN<pcl::PointXYZRGB> kdtree;
     kdtree.setInputCloud(cloud);
 
-    // load polygons
-    pcl::PolygonMesh::Ptr mesh(new pcl::PolygonMesh);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
-    // if (pcl::io::load(polygonfile, *mesh) == -1) {
-    if (pcl::io::loadPLYFile(polygonfile, *mesh) == -1)
-        throw std::runtime_error("Error opening " + polygonfile);
-    pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
+    // load and process polygons
+    cout << "loading polygons" << endl;
+    std::vector< boost::container::small_vector<Vector, 4> > polygons;
+    {
+        // load polygons
+        pcl::PolygonMesh::Ptr mesh(new pcl::PolygonMesh);
+        pcl::PointCloud<pcl::PointXYZ>::Ptr
+            mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
+        // if (pcl::io::load(polygonfile, *mesh) == -1) {
+        if (pcl::io::loadPLYFile(polygonfile, *mesh) == -1)
+            throw std::runtime_error("Error opening " + polygonfile);
+        pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
+
+        // convert index and vertex tables into a single table and
+        // merge quad polygons split into two triangles
+        size_t i;
+        for (i=0;  i < mesh->polygons.size() - 1;  ++i) {
+            const auto &current = mesh->polygons[i].vertices;
+            const auto &next = mesh->polygons[i+1].vertices;
+
+            polygons.emplace_back();
+            auto &p = polygons.back();
+            p.reserve(current.size());
+            for (auto index : current)
+                p.push_back((*mesh_points)[index]);
+
+            // if both are triangles, try to merge them
+            if (current.size() == 3 && next.size() == 3) {
+                for (unsigned j=0; j<3; ++j) {
+                    for (unsigned k=0; k<3; ++k) {
+                        if (next[j] == current[(k+1) % 3] &&
+                            next[(j+1) % 3] == current[k])
+                        {
+                            Vector v = (*mesh_points)[next[(j+2) % 3]];
+                            // check if new vertex is in the same plane
+                            double tripleproduct =
+                                (p[1] - p[0]).cross(p[2] - p[0]).dot(v - p[0]);
+                            if (tripleproduct == 0 ||  // first check 0 for efficiency
+                                tripleproduct <= (v - p[0]).norm() * MAX_PLANE_ERROR)
+                            {
+                                p.reserve(4);
+                                p.insert(p.begin() + k+1, v);
+                                ++i;  // skip next polygon
+                                goto end_merge_loop;
+                            }
+                        }
+                    }
+                }
+            end_merge_loop: ;
+            }
+        }
+
+        if (i < mesh->polygons.size()) {
+            const auto &current = mesh->polygons[i].vertices;
+            polygons.emplace_back();
+            auto &p = polygons.back();
+            p.reserve(current.size());
+            for (auto index : current)
+                p.push_back((*mesh_points)[index]);
+        }
+    }
 
     // find longest side of any polygon and store it as a base value
     // for texture size calculations (note: for polygons with more
     // than 4 sides, the value will probably be too small)
     double max_polygon_size = 0.0;
-    for (const pcl::Vertices &polygon : mesh->polygons) {
-        Vector previous = (*mesh_points)[polygon.vertices.back()];
-        for (auto index : polygon.vertices) {
-            Vector current = (*mesh_points)[index];
-            double len = (current - previous).norm();
+    for (const auto &vertices : polygons) {
+        const Vector *previous = &vertices.back();
+        for (const Vector &current : vertices) {
+            double len = (current - *previous).norm();
             if (len > max_polygon_size)
                 max_polygon_size = len;
-            previous = current;
+            previous = &current;
         }
     }
 
@@ -246,19 +301,14 @@ void generate(
 
     unsigned polygon_id = 1;
 
-    size_t num_polygons = mesh->polygons.size();
-    for (const pcl::Vertices &polygon : mesh->polygons) {
+    size_t num_polygons = polygons.size();
+    for (auto &vertices : polygons) {
         cout << "processing polygon " << polygon_id << "/" << num_polygons
              << " (" << (100.0 * (polygon_id-1) / num_polygons) << "%)" << endl;
 
         try {
             // Calculate vectors for determining 3D location of each texel.
             // Use first two sides with length > 0 as v and u axes.
-
-            boost::container::small_vector<Vector, 4> vertices;
-            vertices.reserve(polygon.vertices.size());
-            for (auto index : polygon.vertices)
-                vertices.push_back((*mesh_points)[index]);
 
             merge_identical_vertices(vertices);
             Vector v_side = vertices[1] - vertices[0];
