@@ -10,7 +10,6 @@
 #include <boost/container/vector.hpp>
 #include <boost/container/small_vector.hpp>
 #include <pcl/io/auto_io.h>
-#include <pcl/io/ply_io.h>
 #include <pcl/impl/point_types.hpp>
 #include <pcl/PolygonMesh.h>
 #include <pcl/conversions.h>
@@ -28,8 +27,15 @@ using std::endl;
 using std::isfinite;
 
 
+// Smallest texture width and height
 const unsigned MIN_TEXTURE_SIZE = 16;
+
+// When checking whether two triangles form a quad, allow the
+// two non-common vertices deviate this much from plane
 const double MAX_PLANE_ERROR = 1e-6;
+
+// Optimize memory allocation for this number of vertices per polygon
+const size_t MAX_EXPECTED_VERTICES = 4;
 
 
 class internal_error : public std::runtime_error {
@@ -196,7 +202,7 @@ void generate(
     unsigned pixel_size = alpha ? 4 : 3;
 
 
-    // load input point cloud
+    // load input point cloud and build k-d tree
     cout << "loading point cloud" << endl;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
     if (pcl::io::load(cloudfile, *cloud) == -1)
@@ -206,19 +212,21 @@ void generate(
 
     // load and process polygons
     cout << "loading polygons" << endl;
-    std::vector< boost::container::small_vector<Vector, 4> > polygons;
+    std::vector<
+        boost::container::small_vector<Vector, MAX_EXPECTED_VERTICES>
+        > polygons;
     {
         // load polygons
         pcl::PolygonMesh::Ptr mesh(new pcl::PolygonMesh);
         pcl::PointCloud<pcl::PointXYZ>::Ptr
             mesh_points(new pcl::PointCloud<pcl::PointXYZ>);
-        // if (pcl::io::load(polygonfile, *mesh) == -1) {
-        if (pcl::io::loadPLYFile(polygonfile, *mesh) == -1)
+        if (pcl::io::load(polygonfile, *mesh) == -1)
             throw std::runtime_error("Error opening " + polygonfile);
         pcl::fromPCLPointCloud2(mesh->cloud, *mesh_points);
 
-        // convert index and vertex tables into a single table and
-        // merge quad polygons split into two triangles
+        // convert index and vertex tables into a single table, and
+        // merge quad polygons that have been split into two
+        // consecutive triangles
         size_t i;
         for (i=0;  i < mesh->polygons.size() - 1;  ++i) {
             const auto &current = mesh->polygons[i].vertices;
@@ -297,14 +305,15 @@ void generate(
     std::vector<int> point_indices(points_per_texel);
     std::vector<float> point_sqr_distances(points_per_texel);
     boost::container::vector<png_byte> png_row(
-        max_texture_size * pixel_size, boost::container::default_init);
+        max_texture_size * pixel_size,
+        boost::container::default_init);  // don't initialize items
 
     unsigned polygon_id = 1;
 
     size_t num_polygons = polygons.size();
     for (auto &vertices : polygons) {
         cout << "processing polygon " << polygon_id << "/" << num_polygons
-             << " (" << (100.0 * (polygon_id-1) / num_polygons) << "%)" << endl;
+             << " (" << (100.0 * (polygon_id-1) / num_polygons) << "% done)" << endl;
 
         try {
             // Calculate vectors for determining 3D location of each texel.
@@ -364,7 +373,8 @@ void generate(
 
             // calculate texture coordinates
 
-            boost::container::small_vector<float, 4*2> texturecoords;
+            boost::container::small_vector<float, MAX_EXPECTED_VERTICES*2>
+                texturecoords;
             texturecoords.reserve(vertices.size() * 2);
 
             // Make transformation matrix for change of basis from

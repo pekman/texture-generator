@@ -73,8 +73,8 @@ int main(int argc, char *argv[])
             cout << endl;
             cout << "  cloudfile      input point cloud file" << endl;
             cout << "  polygonfile    input polygon file" << endl;
-            cout << "  outfile        output file name with or without extension"
-                 << endl;
+            cout << "  outfile        output file name with or without extension," << endl
+                 << "                 paths not allowed" << endl;
             cout << endl;
             cout << opts << endl;
             return vm.count("help") ? 0 : 2;
