@@ -20,6 +20,8 @@ endif()
 
 find_package(Boost COMPONENTS program_options REQUIRED)
 
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+
 set(CMAKE_CXX_STANDARD 11)
 
 if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
@@ -28,4 +30,5 @@ if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
 endif()
 
 add_executable(texturegen main.cpp generate.cpp)
-target_link_libraries(texturegen ${PCL_LIBRARIES} ${PNG_LIBRARY} ${Boost_LIBRARIES})
+target_link_libraries(texturegen
+  ${PCL_LIBRARIES} ${PNG_LIBRARY} ${Boost_LIBRARIES} Eigen3::Eigen)
