@@ -10,11 +10,11 @@ k-nearest-neighbor search in the point cloud for each texel.
 Build requirements
 ------------------
 
-- [CMake] (≥3.0)
-- [Boost] (≥1.58.0)
+- [CMake][] (≥3.0)
+- [Boost][] (≥1.58.0)
 - [Point Cloud Library][PCL] (≥1.8.0)
-- [Eigen] (≥3.3.2)
-- [libpng] (≥1.2.54)
+- [Eigen][] (≥3.3.2)
+- [libpng][] (≥1.2.54)
 
 
 Compiling
